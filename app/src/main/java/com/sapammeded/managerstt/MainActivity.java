@@ -1,98 +1,19 @@
 package com.sapammeded.managerstt;
 
-import android.app.*;
-import android.os.*;
-import android.content.*;
-import android.graphics.Color;
-import android.view.*;
-import android.widget.*;
-import org.json.*;
-import java.io.*;
-import java.net.*;
-import java.util.*;
+import android.app.*; import android.os.*; import android.content.*; import android.graphics.Color; import android.view.*; import android.widget.*; import org.json.*; import java.io.*; import java.net.*;
 
 public class MainActivity extends Activity {
-    private LinearLayout list;
-    private TextView summary, server;
-    private android.content.SharedPreferences prefs;
-    private static final String DEFAULT_API = "";
-
-    @Override public void onCreate(Bundle b) {
-        super.onCreate(b);
-        prefs = getSharedPreferences("manager", MODE_PRIVATE);
-        buildUi();
-        refresh();
-    }
-
-    private TextView tv(String text, int size) {
-        TextView v = new TextView(this); v.setText(text); v.setTextSize(size); v.setTextColor(Color.rgb(20,30,45));
-        v.setPadding(18,12,18,12); return v;
-    }
-    private Button btn(String text) { Button b=new Button(this); b.setText(text); return b; }
-
-    private void buildUi() {
-        LinearLayout root=new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(Color.rgb(245,247,250));
-        LinearLayout head=new LinearLayout(this); head.setOrientation(LinearLayout.VERTICAL); head.setPadding(18,18,18,8); head.setBackgroundColor(Color.rgb(11,18,32));
-        TextView title=tv("MANAGER STT",22); title.setTextColor(Color.WHITE); title.setTypeface(null,1); head.addView(title);
-        TextView sub=tv("ALLSTT Remote Control Center",14); sub.setTextColor(Color.LTGRAY); head.addView(sub);
-        root.addView(head);
-        LinearLayout bar=new LinearLayout(this); bar.setPadding(8,4,8,4);
-        Button refresh=btn("REFRESH"); refresh.setOnClickListener(v->refresh()); bar.addView(refresh,new LinearLayout.LayoutParams(0,WRAP_CONTENT,1));
-        Button settings=btn("SERVER"); settings.setOnClickListener(v->serverDialog()); bar.addView(settings,new LinearLayout.LayoutParams(0,WRAP_CONTENT,1));
-        root.addView(bar);
-        server=tv("Server: belum dikonfigurasi",12); root.addView(server);
-        summary=tv("Devices: -",16); summary.setTypeface(null,1); root.addView(summary);
-        ScrollView sv=new ScrollView(this); list=new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL); list.setPadding(10,4,10,30); sv.addView(list); root.addView(sv,new LinearLayout.LayoutParams(-1,0,1));
-        setContentView(root);
-    }
-
-    private String api() { return prefs.getString("api", DEFAULT_API); }
-    private String token() { return prefs.getString("token", ""); }
-
-    private void serverDialog() {
-        LinearLayout box=new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(30,5,30,5);
-        EditText url=new EditText(this); url.setHint("Manager API URL"); url.setText(api()); box.addView(url);
-        EditText key=new EditText(this); key.setHint("Manager token"); key.setInputType(129); key.setText(token()); box.addView(key);
-        new AlertDialog.Builder(this).setTitle("Central Server").setView(box).setPositiveButton("SAVE",(d,w)->{prefs.edit().putString("api",url.getText().toString().trim()).putString("token",key.getText().toString().trim()).apply(); refresh();}).setNegativeButton("CANCEL",null).show();
-    }
-
-    private void refresh() {
-        String u=api(); server.setText("Server: "+(u.isEmpty()?"belum dikonfigurasi":u));
-        if(u.isEmpty()){ summary.setText("Devices: -  | Konfigurasikan SERVER terlebih dahulu"); list.removeAllViews(); return; }
-        summary.setText("Loading devices..."); list.removeAllViews();
-        new Thread(()->{
-            try { String raw=http(u+"?action=LIST_DEVICES&token="+enc(token())); JSONObject j=new JSONObject(raw); if(!"OK".equalsIgnoreCase(j.optString("status"))) throw new Exception(j.optString("message"));
-                runOnUiThread(()->render(j.optJSONArray("devices")));
-            } catch(Exception e){ runOnUiThread(()->summary.setText("ERROR: "+e.getMessage())); }
-        }).start();
-    }
-
-    private void render(JSONArray a) {
-        list.removeAllViews(); int active=0,blocked=0,pending=0,revoked=0,maintenance=0;
-        if(a==null)a=new JSONArray();
-        for(int i=0;i<a.length();i++) { JSONObject d=a.optJSONObject(i); String s=d.optString("status","PENDING").toUpperCase(); if(s.equals("ACTIVE"))active++; else if(s.equals("BLOCKED"))blocked++; else if(s.equals("REVOKED"))revoked++; else if(s.equals("MAINTENANCE"))maintenance++; else pending++; addDevice(d); }
-        summary.setText("Devices: "+a.length()+"   ACTIVE "+active+"   PENDING "+pending+"   BLOCKED "+blocked+"   REVOKED "+revoked+"   MAINT "+maintenance);
-        if(a.length()==0) list.addView(tv("Belum ada device terdaftar.",16));
-    }
-
-    private void addDevice(JSONObject d) {
-        LinearLayout card=new LinearLayout(this); card.setOrientation(LinearLayout.VERTICAL); card.setPadding(4,8,4,8); card.setBackgroundColor(Color.WHITE);
-        String id=d.optString("installation_id"); String app=d.optString("app"); String status=d.optString("status","PENDING");
-        TextView name=tv((d.optString("user_name").isEmpty()?"Device":d.optString("user_name"))+"  •  "+app,18); name.setTypeface(null,1); card.addView(name);
-        card.addView(tv("ID: "+id+"\nDevice: "+d.optString("device")+"\nAndroid: "+d.optString("android")+"\nVersion: "+d.optString("app_version")+"\nStatus: "+status+"\nLast seen: "+d.optString("last_seen"),13));
-        LinearLayout actions=new LinearLayout(this);
-        String[] states={"ACTIVE","BLOCKED","MAINTENANCE","REVOKED"};
-        for(String st:states){ Button b=btn(st); b.setOnClickListener(v->setStatus(id,app,st)); actions.addView(b,new LinearLayout.LayoutParams(0,WRAP_CONTENT,1)); }
-        card.addView(actions); list.addView(card,new LinearLayout.LayoutParams(-1,WRAP_CONTENT));
-        Space gap=new Space(this); list.addView(gap,new LinearLayout.LayoutParams(1,10));
-    }
-
-    private void setStatus(String id,String app,String status) {
-        new AlertDialog.Builder(this).setTitle("Confirm").setMessage("Set "+id+" to "+status+"?").setPositiveButton("YES",(d,w)->{
-            new Thread(()->{try{String q=api()+"?action=SET_STATUS&token="+enc(token())+"&installation_id="+enc(id)+"&app="+enc(app)+"&status="+enc(status); JSONObject j=new JSONObject(http(q)); runOnUiThread(()->{Toast.makeText(this,j.optString("message"),Toast.LENGTH_SHORT).show(); refresh();});}catch(Exception e){runOnUiThread(()->Toast.makeText(this,e.getMessage(),Toast.LENGTH_LONG).show());}}).start();
-        }).setNegativeButton("CANCEL",null).show();
-    }
-
-    private String enc(String s)throws Exception{return URLEncoder.encode(s==null?"":s,"UTF-8");}
-    private String http(String u)throws Exception{ HttpURLConnection c=(HttpURLConnection)new URL(u).openConnection(); c.setConnectTimeout(10000); c.setReadTimeout(15000); c.setRequestMethod("GET"); c.setRequestProperty("Accept","application/json"); int code=c.getResponseCode(); InputStream in=code>=200&&code<400?c.getInputStream():c.getErrorStream(); BufferedReader r=new BufferedReader(new InputStreamReader(in,"UTF-8")); StringBuilder x=new StringBuilder(); String l; while((l=r.readLine())!=null)x.append(l); r.close(); if(code<200||code>=400)throw new IOException("HTTP "+code); return x.toString(); }
+ private LinearLayout list; private TextView summary,server; private SharedPreferences prefs;
+ @Override public void onCreate(Bundle b){super.onCreate(b);prefs=getSharedPreferences("manager",MODE_PRIVATE);buildUi();refresh();}
+ private TextView tv(String t,int s){TextView v=new TextView(this);v.setText(t);v.setTextSize(s);v.setTextColor(Color.rgb(20,30,45));v.setPadding(18,12,18,12);return v;}
+ private Button btn(String t){Button b=new Button(this);b.setText(t);return b;}
+ private void buildUi(){LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(Color.rgb(245,247,250));LinearLayout head=new LinearLayout(this);head.setOrientation(LinearLayout.VERTICAL);head.setPadding(18,18,18,8);head.setBackgroundColor(Color.rgb(11,18,32));TextView title=tv("MANAGER STT",22);title.setTextColor(Color.WHITE);title.setTypeface(null,1);head.addView(title);TextView sub=tv("ALLSTT Remote Control Center",14);sub.setTextColor(Color.LTGRAY);head.addView(sub);root.addView(head);LinearLayout bar=new LinearLayout(this);bar.setPadding(8,4,8,4);Button r=btn("REFRESH");r.setOnClickListener(v->refresh());bar.addView(r,new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1));Button s=btn("SERVER");s.setOnClickListener(v->serverDialog());bar.addView(s,new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1));root.addView(bar);server=tv("Server: belum dikonfigurasi",12);root.addView(server);summary=tv("Devices: -",16);summary.setTypeface(null,1);root.addView(summary);ScrollView sv=new ScrollView(this);list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);list.setPadding(10,4,10,30);sv.addView(list);root.addView(sv,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);}
+ private String api(){return prefs.getString("api","");} private String token(){return prefs.getString("token","");}
+ private void serverDialog(){LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(30,5,30,5);EditText url=new EditText(this);url.setHint("Manager API URL");url.setText(api());box.addView(url);EditText key=new EditText(this);key.setHint("Manager token");key.setInputType(129);key.setText(token());box.addView(key);new AlertDialog.Builder(this).setTitle("Central Server").setView(box).setPositiveButton("SAVE",(d,w)->{prefs.edit().putString("api",url.getText().toString().trim()).putString("token",key.getText().toString().trim()).apply();refresh();}).setNegativeButton("CANCEL",null).show();}
+ private void refresh(){String u=api();server.setText("Server: "+(u.isEmpty()?"belum dikonfigurasi":u));if(u.isEmpty()){summary.setText("Devices: - | Konfigurasikan SERVER terlebih dahulu");list.removeAllViews();return;}summary.setText("Loading devices...");list.removeAllViews();new Thread(()->{try{JSONObject j=new JSONObject(http(u+"?action=LIST_DEVICES&token="+enc(token())));if(!"OK".equalsIgnoreCase(j.optString("status")))throw new Exception(j.optString("message"));runOnUiThread(()->render(j.optJSONArray("devices")));}catch(Exception e){runOnUiThread(()->summary.setText("ERROR: "+e.getMessage()));}}).start();}
+ private void render(JSONArray a){list.removeAllViews();int active=0,blocked=0,pending=0,revoked=0,maintenance=0;if(a==null)a=new JSONArray();for(int i=0;i<a.length();i++){JSONObject d=a.optJSONObject(i);String s=d.optString("status","PENDING").toUpperCase();if(s.equals("ACTIVE"))active++;else if(s.equals("BLOCKED"))blocked++;else if(s.equals("REVOKED"))revoked++;else if(s.equals("MAINTENANCE"))maintenance++;else pending++;addDevice(d);}summary.setText("Devices: "+a.length()+" | ACTIVE "+active+" | PENDING "+pending+" | BLOCKED "+blocked+" | REVOKED "+revoked+" | MAINT "+maintenance);if(a.length()==0)list.addView(tv("Belum ada device terdaftar.",16));}
+ private void addDevice(JSONObject d){LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(4,8,4,8);card.setBackgroundColor(Color.WHITE);String id=d.optString("installation_id"),app=d.optString("app"),status=d.optString("status","PENDING");TextView n=tv((d.optString("user_name").isEmpty()?"Device":d.optString("user_name"))+" • "+app,18);n.setTypeface(null,1);card.addView(n);card.addView(tv("ID: "+id+"\nDevice: "+d.optString("device")+"\nAndroid: "+d.optString("android")+"\nVersion: "+d.optString("app_version")+"\nStatus: "+status+"\nLast seen: "+d.optString("last_seen"),13));LinearLayout actions=new LinearLayout(this);for(String st:new String[]{"ACTIVE","BLOCKED","MAINTENANCE","REVOKED"}){Button b=btn(st);b.setOnClickListener(v->setStatus(id,app,st));actions.addView(b,new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1));}card.addView(actions);list.addView(card,new LinearLayout.LayoutParams(-1,ViewGroup.LayoutParams.WRAP_CONTENT));Space gap=new Space(this);list.addView(gap,new LinearLayout.LayoutParams(1,10));}
+ private void setStatus(String id,String app,String status){new AlertDialog.Builder(this).setTitle("Confirm").setMessage("Set "+id+" to "+status+"?").setPositiveButton("YES",(d,w)->new Thread(()->{try{JSONObject j=new JSONObject(http(api()+"?action=SET_STATUS&token="+enc(token())+"&installation_id="+enc(id)+"&app="+enc(app)+"&status="+enc(status)));runOnUiThread(()->{Toast.makeText(this,j.optString("message"),Toast.LENGTH_SHORT).show();refresh();});}catch(Exception e){runOnUiThread(()->Toast.makeText(this,e.getMessage(),Toast.LENGTH_LONG).show());}}).start()).setNegativeButton("CANCEL",null).show();}
+ private String enc(String s)throws Exception{return URLEncoder.encode(s==null?"":s,"UTF-8");}
+ private String http(String u)throws Exception{HttpURLConnection c=(HttpURLConnection)new URL(u).openConnection();c.setConnectTimeout(10000);c.setReadTimeout(15000);c.setRequestMethod("GET");c.setRequestProperty("Accept","application/json");int code=c.getResponseCode();InputStream in=code>=200&&code<400?c.getInputStream():c.getErrorStream();BufferedReader r=new BufferedReader(new InputStreamReader(in,"UTF-8"));StringBuilder x=new StringBuilder();String l;while((l=r.readLine())!=null)x.append(l);r.close();if(code<200||code>=400)throw new IOException("HTTP "+code);return x.toString();}
 }
